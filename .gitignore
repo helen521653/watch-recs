@@ -8,3 +8,6 @@ wheels/
 
 # Virtual environments
 .venv
+/Movies_and_TV.train.csv.gz
+/Movies_and_TV.valid.csv.gz
+/Movies_and_TV.test.csv.gz

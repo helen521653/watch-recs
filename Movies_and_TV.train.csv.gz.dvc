@@ -1,0 +1,5 @@
+outs:
+- md5: 6a273921e35cb7fb715680777946f464
+  size: 137069808
+  hash: md5
+  path: Movies_and_TV.train.csv.gz
