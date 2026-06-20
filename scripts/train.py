@@ -137,7 +137,8 @@ def save_plots(trainer: L.Trainer, plots_dir: Path, top_k: int = 10) -> None:
         plt.close(fig)
         print(f"Saved {plots_dir / filename}")
 
-    plot_columns({"train/loss": "train", "val/loss": "val"}, "loss.png", "Loss")
+    plot_columns({"train/loss": "train"}, "loss_train.png", "Train Loss")
+    plot_columns({"val/loss": "val"}, "loss_val.png", "Val Loss")
     plot_columns(
         {f"val/precision@{top_k}": "val"},
         f"precision_at_{top_k}.png",
@@ -199,8 +200,7 @@ def build_loggers(cfg: DictConfig) -> list:
     return [mlf_logger, csv_logger]
 
 
-@hydra.main(config_path="../configs", config_name="config", version_base=None)
-def main(cfg: DictConfig) -> None:
+def run_training(cfg: DictConfig) -> None:
     if cfg.training.download:
         download_data(Path(cfg.data.data_dir))
     if cfg.training.pull:
@@ -212,16 +212,26 @@ def main(cfg: DictConfig) -> None:
     model = build_model(cfg, num_users=dm.num_users, num_items=dm.num_items)
     trainer = build_trainer(cfg)
     trainer.fit(model, datamodule=dm)
-    save_plots(trainer, Path(cfg.training.plots_dir), top_k=cfg.model.top_k)
 
-    original_cwd = Path(get_original_cwd())
-    onnx_path = original_cwd / cfg.training.onnx_path
+    try:
+        cwd = Path(get_original_cwd())
+    except Exception:
+        cwd = Path.cwd()
+
+    save_plots(trainer, cwd / cfg.training.plots_dir, top_k=cfg.model.top_k)
+
+    onnx_path = cwd / cfg.training.onnx_path
     onnx_path.parent.mkdir(exist_ok=True)
     export_onnx(model, onnx_path)
 
     if not cfg.training.fast_dev_run:
         log_onnx_to_mlflow(onnx_path, cfg)
         run_popularity_baseline(dm, cfg)
+
+
+@hydra.main(config_path="../configs", config_name="config", version_base=None)
+def main(cfg: DictConfig) -> None:
+    run_training(cfg)
 
 
 if __name__ == "__main__":

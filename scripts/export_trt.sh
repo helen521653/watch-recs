@@ -7,7 +7,8 @@
 
 ONNX_PATH=${1:-models/ncf.onnx}
 ENGINE_PATH=${2:-models/ncf.trt}
-NUM_ITEMS=197747
+META_PATH="${ONNX_PATH%.onnx}.json"
+NUM_ITEMS=$(python -c "import json; print(json.load(open('${META_PATH}'))['num_items'])")
 
 trtexec \
     --onnx="${ONNX_PATH}" \

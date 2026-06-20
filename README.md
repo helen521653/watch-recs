@@ -100,7 +100,11 @@ uv run mlflow server --host 127.0.0.1 --port 8080
 
 **Обучение NCF с параметрами по умолчанию:**
 ```bash
+# через scripts/train.py (Hydra CLI)
 uv run python scripts/train.py
+
+# через единую точку входа commands.py (fire + hydra compose API)
+uv run python commands.py train
 ```
 
 **Быстрая проверка корректности кода (1 батч, логирование отключено):**
@@ -159,33 +163,77 @@ bash scripts/export_trt.sh models/ncf.onnx models/ncf.trt
 
 ### Infer
 
-Входные данные: `user_id` — целочисленный индекс пользователя (0-based, из обучения).
+**Минимальные зависимости для инференса:** `onnxruntime`, `numpy`, `fire` — не требуется полная установка проекта.
 
-**Запуск инференса через CLI:**
+**Формат входных данных:**
+- `user_id` — целочисленный индекс пользователя (0-based), соответствует маппингу из обучения
+- Маппинг `user_id → user_idx` хранится в `models/ncf.json` (генерируется при обучении)
+- Диапазон: от `0` до `num_users - 1` (значение `num_users` есть в `models/ncf.json`)
+
+**Запуск инференса:**
 ```bash
+# через infer.py (публичный API в корне репозитория)
 python infer.py --user_id=42 --top_k=10
+
+# через единую точку входа commands.py
+python commands.py infer --user_id=42 --top_k=10
+
+# с предварительным pull модели из DVC remote
+python infer.py --user_id=42 --pull=true
 ```
 
-**Запуск с другим путём к модели:**
-```bash
-python infer.py --user_id=42 --onnx_path=models/ncf.onnx --top_k=20
+**Пример вывода:**
+```
+Top-10 recommendations for user_id=42:
+   1. item_idx=15234  score=0.9821
+   2. item_idx=8901   score=0.9743
+   ...
 ```
 
-Вывод — список `item_idx` (целочисленных индексов товаров) отсортированных по убыванию скора.
+Вывод — ранжированный список `item_idx` (целочисленных индексов товаров) по убыванию скора релевантности.
 
-### MLflow Serving
+### Triton Inference Server
 
-Запустить REST-сервер для инференса через MLflow:
+Структура репозитория моделей Triton находится в `triton/`:
+```
+triton/
+└── ncf/
+    ├── config.pbtxt   # конфиг модели (backend: onnxruntime)
+    └── 1/
+        └── model.onnx  # копируется скриптом setup_triton.sh
+```
+
+**Подготовка и запуск:**
 ```bash
-# 1. Запустить MLflow сервер (если не запущен)
-mlflow server --host 127.0.0.1 --port 8080 \
-    --backend-store-uri sqlite:////tmp/mlflow.db \
-    --artifacts-destination /tmp/mlflow-artifacts
+# 1. Скопировать экспортированную модель в Triton-репозиторий
+bash scripts/setup_triton.sh
 
-# 2. Узнать run_id рана ncf-onnx из MLflow UI или CLI
+# 2. Запустить Triton (Docker)
+docker run --rm -p 8000:8000 -p 8001:8001 -p 8002:8002 \
+    -v $(pwd)/triton:/models \
+    nvcr.io/nvidia/tritonserver:24.01-py3 \
+    tritonserver --model-repository=/models
+
+# 3. Проверить статус модели
+curl http://localhost:8000/v2/models/ncf/ready
+```
+
+**Тестирование через Python API:**
+```bash
+# установить клиент (один раз)
+pip install tritonclient[http]
+
+# запрос рекомендаций
+python scripts/triton_client.py --user_id=42 --top_k=10
+```
+
+### MLflow Serving (альтернатива, макс 5 баллов)
+
+```bash
+# Узнать run_id рана ncf-onnx
 mlflow runs list --experiment-name watch-recs
 
-# 3. Поднять serving
+# Поднять serving
 mlflow models serve \
     --model-uri "runs:/<run_id>/model" \
     --port 5002 \

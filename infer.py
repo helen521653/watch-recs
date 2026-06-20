@@ -5,11 +5,14 @@ import fire
 import numpy as np
 import onnxruntime as ort
 
+from data.download import pull_models
+
 
 def recommend(
     user_id: int,
     onnx_path: str = "models/ncf.onnx",
     top_k: int = 10,
+    pull: bool = False,
 ) -> list[int]:
     """Return top-K item indices for a given user.
 
@@ -17,7 +20,11 @@ def recommend(
         user_id: encoded user index (integer, 0-based from training)
         onnx_path: path to the exported ONNX model file
         top_k: number of recommendations to return
+        pull: pull model artifacts from DVC remote before inference
     """
+    if pull:
+        pull_models()
+
     onnx_path = Path(onnx_path)
     meta_path = onnx_path.with_suffix(".json")
     with meta_path.open() as f:

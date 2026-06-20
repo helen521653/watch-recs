@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import DataLoader, Dataset
+from tqdm import tqdm
 
 # --------------------------------------------------------------------------- #
 # Loading
@@ -111,8 +112,6 @@ class InteractionDataset(Dataset):
         self._samples = self._build_samples(positive_df)
 
     def _build_samples(self, positive_df: pd.DataFrame) -> list[tuple[int, int, float]]:
-        from tqdm import tqdm
-
         user_ids = positive_df["user_idx"].tolist()
         item_ids = positive_df["item_idx"].tolist()
 

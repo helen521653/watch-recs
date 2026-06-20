@@ -25,7 +25,6 @@ recs/
 lightning_logs/
 logs/
 outputs/
-plots/
 
 # MLflow
 mlflow.db
