@@ -1,6 +1,6 @@
 [core]
     remote = data-remote
 ['remote "data-remote"']
-    url = gdrive://1hAapnZa7ODEUCD2fhEqHXcdl7dOpigmM
+    url = /home/lena/dvc-store/data
 ['remote "models-remote"']
-    url = gdrive://1n9DyLg46rw8DNvlvnfpnueW7vX4qtCoK
+    url = /home/lena/dvc-store/models

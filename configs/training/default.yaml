@@ -1,0 +1,10 @@
+max_epochs: 10
+fast_dev_run: false
+early_stopping_patience: 3
+accelerator: "auto"
+devices: "auto"
+download: false
+pull: false
+mlflow_tracking_uri: "http://127.0.0.1:8080"
+mlflow_experiment_name: "watch-recs"
+plots_dir: "plots"

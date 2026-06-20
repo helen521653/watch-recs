@@ -1,0 +1,5 @@
+embedding_dim: 32
+hidden_layers: [64, 32, 16]
+dropout: 0.2
+lr: 0.001
+top_k: 10

@@ -1,0 +1,185 @@
+import subprocess
+from pathlib import Path
+
+import hydra
+import lightning as L
+import matplotlib.pyplot as plt
+import mlflow
+import pandas as pd
+import torch
+from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
+from lightning.pytorch.loggers import CSVLogger, MLFlowLogger
+from omegaconf import DictConfig
+from torchmetrics import MetricCollection
+from torchmetrics.retrieval import (
+    RetrievalNormalizedDCG,
+    RetrievalPrecision,
+    RetrievalRecall,
+)
+
+from data.dataset import RecsDataModule
+from data.download import download_data, pull_dvc
+from models.ncf import NCFModel
+from models.popularity import PopularityRecommender
+
+
+def evaluate_popularity(
+    baseline: PopularityRecommender,
+    dm: RecsDataModule,
+    top_k: int,
+    stage: str,
+) -> dict[str, float]:
+    metrics = MetricCollection(
+        {
+            f"precision@{top_k}": RetrievalPrecision(top_k=top_k),
+            f"recall@{top_k}": RetrievalRecall(top_k=top_k),
+            f"ndcg@{top_k}": RetrievalNormalizedDCG(top_k=top_k),
+        }
+    )
+    loader = dm.val_dataloader() if stage == "val" else dm.test_dataloader()
+    for user_ids, item_ids, labels in loader:
+        scores = torch.tensor(
+            [baseline.score(int(iid)) for iid in item_ids],
+            dtype=torch.float,
+        )
+        metrics.update(scores, labels.long(), indexes=user_ids)
+    return {f"{stage}/{k}": float(v) for k, v in metrics.compute().items()}
+
+
+def run_popularity_baseline(dm: RecsDataModule, cfg: DictConfig) -> None:
+    baseline = PopularityRecommender()
+    baseline.fit(dm.train_df)
+
+    val_metrics = evaluate_popularity(baseline, dm, cfg.model.top_k, "val")
+    test_metrics = evaluate_popularity(baseline, dm, cfg.model.top_k, "test")
+    all_metrics = {**val_metrics, **test_metrics}
+
+    mlflow.set_tracking_uri(cfg.training.mlflow_tracking_uri)
+    mlflow.set_experiment(cfg.training.mlflow_experiment_name)
+    with mlflow.start_run(
+        run_name="popularity-baseline", tags={"git_commit": get_git_commit()}
+    ):
+        mlflow.log_metrics(all_metrics)
+
+    print("Popularity baseline:", all_metrics)
+
+
+def build_datamodule(cfg: DictConfig) -> RecsDataModule:
+    return RecsDataModule(
+        data_dir=Path(cfg.data.data_dir),
+        batch_size=cfg.data.batch_size,
+        num_workers=cfg.data.num_workers,
+        neg_sample_ratio=cfg.data.neg_sample_ratio,
+        eval_neg_sample_ratio=cfg.data.eval_neg_sample_ratio,
+        seed=cfg.data.seed,
+        min_positive_rating=cfg.data.min_positive_rating,
+    )
+
+
+def build_model(cfg: DictConfig, num_users: int, num_items: int) -> NCFModel:
+    return NCFModel(
+        num_users=num_users,
+        num_items=num_items,
+        embedding_dim=cfg.model.embedding_dim,
+        hidden_layers=list(cfg.model.hidden_layers),
+        dropout=cfg.model.dropout,
+        lr=cfg.model.lr,
+        top_k=cfg.model.top_k,
+    )
+
+
+def build_trainer(cfg: DictConfig) -> L.Trainer:
+    callbacks = [
+        ModelCheckpoint(monitor="val/loss", mode="min", save_top_k=1),
+        EarlyStopping(
+            monitor="val/loss", patience=cfg.training.early_stopping_patience
+        ),
+    ]
+    return L.Trainer(
+        max_epochs=cfg.training.max_epochs,
+        accelerator=cfg.training.accelerator,
+        devices=cfg.training.devices,
+        callbacks=callbacks,
+        fast_dev_run=cfg.training.fast_dev_run,
+        logger=build_loggers(cfg),
+    )
+
+
+def save_plots(trainer: L.Trainer, plots_dir: Path, top_k: int = 10) -> None:
+    csv_logger = next((lg for lg in trainer.loggers if isinstance(lg, CSVLogger)), None)
+    if csv_logger is None:
+        return
+
+    metrics_path = Path(csv_logger.log_dir) / "metrics.csv"
+    if not metrics_path.exists():
+        return
+
+    df = pd.read_csv(metrics_path)
+    if df.empty or "epoch" not in df.columns:
+        return
+
+    plots_dir.mkdir(exist_ok=True)
+
+    def plot_columns(columns: dict[str, str], filename: str, title: str) -> None:
+        fig, ax = plt.subplots()
+        for col, label in columns.items():
+            if col in df.columns:
+                subset = df[["epoch", col]].dropna()
+                ax.plot(subset["epoch"], subset[col], label=label)
+        ax.set_xlabel("Epoch")
+        ax.set_title(title)
+        ax.legend()
+        fig.savefig(plots_dir / filename, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        print(f"Saved {plots_dir / filename}")
+
+    plot_columns({"train/loss": "train", "val/loss": "val"}, "loss.png", "Loss")
+    plot_columns(
+        {f"val/precision@{top_k}": "val"},
+        f"precision_at_{top_k}.png",
+        f"Precision@{top_k}",
+    )
+    plot_columns(
+        {f"val/recall@{top_k}": "val"}, f"recall_at_{top_k}.png", f"Recall@{top_k}"
+    )
+    plot_columns({f"val/ndcg@{top_k}": "val"}, f"ndcg_at_{top_k}.png", f"NDCG@{top_k}")
+
+
+def get_git_commit() -> str:
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"], capture_output=True, text=True
+    )
+    return result.stdout.strip() or "unknown"
+
+
+def build_loggers(cfg: DictConfig) -> list:
+    mlf_logger = MLFlowLogger(
+        experiment_name=cfg.training.mlflow_experiment_name,
+        tracking_uri=cfg.training.mlflow_tracking_uri,
+        tags={"git_commit": get_git_commit()},
+    )
+    csv_logger = CSVLogger(save_dir=".", name="logs")
+    return [mlf_logger, csv_logger]
+
+
+@hydra.main(config_path="../configs", config_name="config", version_base=None)
+def main(cfg: DictConfig) -> None:
+    if cfg.training.download:
+        download_data(Path(cfg.data.data_dir))
+    if cfg.training.pull:
+        pull_dvc()
+
+    dm = build_datamodule(cfg)
+    dm.setup("fit")
+
+    model = build_model(cfg, num_users=dm.num_users, num_items=dm.num_items)
+    trainer = build_trainer(cfg)
+    trainer.fit(model, datamodule=dm)
+    save_plots(trainer, Path(cfg.training.plots_dir), top_k=cfg.model.top_k)
+
+    if not cfg.training.fast_dev_run:
+        run_popularity_baseline(dm, cfg)
+
+
+if __name__ == "__main__":
+    main()

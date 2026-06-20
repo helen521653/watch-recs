@@ -1,0 +1,5 @@
+defaults:
+  - data: default
+  - model: ncf
+  - training: default
+  - _self_

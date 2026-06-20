@@ -1,0 +1,7 @@
+data_dir: "."
+batch_size: 1024
+neg_sample_ratio: 4
+eval_neg_sample_ratio: 49
+num_workers: 0
+seed: 42
+min_positive_rating: 4
