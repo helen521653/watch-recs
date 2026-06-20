@@ -1,3 +1,4 @@
+import json
 import subprocess
 from pathlib import Path
 
@@ -5,8 +6,11 @@ import hydra
 import lightning as L
 import matplotlib.pyplot as plt
 import mlflow
+import mlflow.onnx
+import onnx as onnx_lib
 import pandas as pd
 import torch
+from hydra.utils import get_original_cwd
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 from lightning.pytorch.loggers import CSVLogger, MLFlowLogger
 from omegaconf import DictConfig
@@ -145,6 +149,39 @@ def save_plots(trainer: L.Trainer, plots_dir: Path, top_k: int = 10) -> None:
     plot_columns({f"val/ndcg@{top_k}": "val"}, f"ndcg_at_{top_k}.png", f"NDCG@{top_k}")
 
 
+def export_onnx(model: NCFModel, path: Path) -> None:
+    model.eval()
+    cpu_model = model.cpu()
+    dummy_users = torch.zeros(1, dtype=torch.long)
+    dummy_items = torch.zeros(1, dtype=torch.long)
+    torch.onnx.export(
+        cpu_model,
+        (dummy_users, dummy_items),
+        path,
+        input_names=["user_ids", "item_ids"],
+        output_names=["scores"],
+        dynamic_axes={
+            "user_ids": {0: "batch_size"},
+            "item_ids": {0: "batch_size"},
+            "scores": {0: "batch_size"},
+        },
+        opset_version=17,
+    )
+    meta = {"num_users": model.hparams.num_users, "num_items": model.hparams.num_items}
+    with path.with_suffix(".json").open("w") as f:
+        json.dump(meta, f)
+    print(f"ONNX model saved to {path}")
+
+
+def log_onnx_to_mlflow(onnx_path: Path, cfg: DictConfig) -> None:
+    onnx_model = onnx_lib.load(str(onnx_path))
+    mlflow.set_tracking_uri(cfg.training.mlflow_tracking_uri)
+    mlflow.set_experiment(cfg.training.mlflow_experiment_name)
+    with mlflow.start_run(run_name="ncf-onnx", tags={"git_commit": get_git_commit()}):
+        mlflow.onnx.log_model(onnx_model, "model")
+    print("ONNX model logged to MLflow")
+
+
 def get_git_commit() -> str:
     result = subprocess.run(
         ["git", "rev-parse", "HEAD"], capture_output=True, text=True
@@ -177,7 +214,13 @@ def main(cfg: DictConfig) -> None:
     trainer.fit(model, datamodule=dm)
     save_plots(trainer, Path(cfg.training.plots_dir), top_k=cfg.model.top_k)
 
+    original_cwd = Path(get_original_cwd())
+    onnx_path = original_cwd / cfg.training.onnx_path
+    onnx_path.parent.mkdir(exist_ok=True)
+    export_onnx(model, onnx_path)
+
     if not cfg.training.fast_dev_run:
+        log_onnx_to_mlflow(onnx_path, cfg)
         run_popularity_baseline(dm, cfg)
 
 

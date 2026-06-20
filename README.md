@@ -138,6 +138,61 @@ uv run python scripts/train.py --multirun data.seed=42,123,777
 
 ## Inference
 
-> Будет добавлено в Task 3.
+### Production preparation
 
-После обучения веса лучшей модели сохраняются автоматически через `ModelCheckpoint` Lightning. Путь к чекпоинту отображается в логах после обучения.
+После обучения скрипт автоматически:
+1. Экспортирует модель NCF в формат **ONNX** (`models/ncf.onnx`) через `torch.onnx.export` с динамическим batch size
+2. Сохраняет метаданные модели (`models/ncf.json`) — `num_users` и `num_items`
+3. Логирует ONNX-модель в MLflow (ран `ncf-onnx`) для последующего Serving
+
+Артефакты поставки:
+- `models/ncf.onnx` — модель для инференса
+- `models/ncf.json` — метаданные (размеры словарей)
+
+**Конвертация в TensorRT** (опционально, для максимальной скорости на GPU):
+```bash
+bash scripts/export_trt.sh models/ncf.onnx models/ncf.trt
+```
+Требует `trtexec` из пакета TensorRT.
+
+### Infer
+
+Входные данные: `user_id` — целочисленный индекс пользователя (0-based, из обучения).
+
+**Запуск инференса через CLI:**
+```bash
+python infer.py --user_id=42 --top_k=10
+```
+
+**Запуск с другим путём к модели:**
+```bash
+python infer.py --user_id=42 --onnx_path=models/ncf.onnx --top_k=20
+```
+
+Вывод — список `item_idx` (целочисленных индексов товаров) отсортированных по убыванию скора.
+
+### MLflow Serving
+
+Запустить REST-сервер для инференса через MLflow:
+```bash
+# 1. Запустить MLflow сервер (если не запущен)
+mlflow server --host 127.0.0.1 --port 8080 \
+    --backend-store-uri sqlite:////tmp/mlflow.db \
+    --artifacts-destination /tmp/mlflow-artifacts
+
+# 2. Узнать run_id рана ncf-onnx из MLflow UI или CLI
+mlflow runs list --experiment-name watch-recs
+
+# 3. Поднять serving
+mlflow models serve \
+    --model-uri "runs:/<run_id>/model" \
+    --port 5002 \
+    --no-conda
+```
+
+**Пример запроса:**
+```bash
+curl -X POST http://127.0.0.1:5002/invocations \
+    -H "Content-Type: application/json" \
+    -d '{"inputs": {"user_ids": [42, 42], "item_ids": [0, 1]}}'
+```
