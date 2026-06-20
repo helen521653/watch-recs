@@ -35,9 +35,9 @@ def evaluate_popularity(
 ) -> dict[str, float]:
     metrics = MetricCollection(
         {
-            f"precision@{top_k}": RetrievalPrecision(top_k=top_k),
-            f"recall@{top_k}": RetrievalRecall(top_k=top_k),
-            f"ndcg@{top_k}": RetrievalNormalizedDCG(top_k=top_k),
+            f"precision_at_{top_k}": RetrievalPrecision(top_k=top_k),
+            f"recall_at_{top_k}": RetrievalRecall(top_k=top_k),
+            f"ndcg_at_{top_k}": RetrievalNormalizedDCG(top_k=top_k),
         }
     )
     loader = dm.val_dataloader() if stage == "val" else dm.test_dataloader()
