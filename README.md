@@ -43,7 +43,9 @@ watch-recs/
 │   ├── ncf.py                  # NCFModel (PyTorch Lightning)
 │   └── popularity.py           # PopularityRecommender (базовая линия)
 ├── scripts/
-│   └── train.py                # точка входа для обучения
+│   ├── train.py                # точка входа для обучения
+│   └── export_trt.sh           # конвертация ONNX → TensorRT
+├── infer.py                    # точка входа для инференса (публичный API)
 ├── Movies_and_TV.train.csv.gz.dvc
 ├── Movies_and_TV.valid.csv.gz.dvc
 ├── Movies_and_TV.test.csv.gz.dvc

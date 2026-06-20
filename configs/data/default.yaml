@@ -1,4 +1,4 @@
-data_dir: "."
+data_dir: "${hydra:runtime.cwd}"
 batch_size: 1024
 neg_sample_ratio: 4
 eval_neg_sample_ratio: 49
