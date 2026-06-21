@@ -92,9 +92,14 @@ def build_model(cfg: DictConfig, num_users: int, num_items: int) -> NCFModel:
     )
 
 
-def build_trainer(cfg: DictConfig) -> L.Trainer:
+def build_trainer(cfg: DictConfig, checkpoint_dir: Path) -> L.Trainer:
     callbacks = [
-        ModelCheckpoint(monitor="val/loss", mode="min", save_top_k=1),
+        ModelCheckpoint(
+            dirpath=checkpoint_dir,
+            monitor="val/loss",
+            mode="min",
+            save_top_k=1,
+        ),
         EarlyStopping(
             monitor="val/loss", patience=cfg.training.early_stopping_patience
         ),
@@ -206,23 +211,27 @@ def run_training(cfg: DictConfig) -> None:
     if cfg.training.pull:
         pull_dvc()
 
-    dm = build_datamodule(cfg)
-    dm.setup("fit")
-
-    model = build_model(cfg, num_users=dm.num_users, num_items=dm.num_items)
-    trainer = build_trainer(cfg)
-    trainer.fit(model, datamodule=dm)
-
     try:
         cwd = Path(get_original_cwd())
     except Exception:
         cwd = Path.cwd()
 
+    dm = build_datamodule(cfg)
+    dm.setup("fit")
+
+    model = build_model(cfg, num_users=dm.num_users, num_items=dm.num_items)
+    checkpoint_dir = cwd / "checkpoints"
+    checkpoint_dir.mkdir(exist_ok=True)
+    trainer = build_trainer(cfg, checkpoint_dir=checkpoint_dir)
+    trainer.fit(model, datamodule=dm)
+
     save_plots(trainer, cwd / cfg.training.plots_dir, top_k=cfg.model.top_k)
 
     onnx_path = cwd / cfg.training.onnx_path
     onnx_path.parent.mkdir(exist_ok=True)
-    export_onnx(model, onnx_path)
+    best_ckpt = trainer.checkpoint_callback.best_model_path
+    best_model = NCFModel.load_from_checkpoint(best_ckpt) if best_ckpt else model
+    export_onnx(best_model, onnx_path)
 
     if not cfg.training.fast_dev_run:
         log_onnx_to_mlflow(onnx_path, cfg)
