@@ -220,7 +220,7 @@ def run_training(cfg: DictConfig) -> None:
     dm.setup("fit")
 
     model = build_model(cfg, num_users=dm.num_users, num_items=dm.num_items)
-    checkpoint_dir = cwd / "checkpoints"
+    checkpoint_dir = cwd / cfg.training.checkpoint_dir
     checkpoint_dir.mkdir(exist_ok=True)
     trainer = build_trainer(cfg, checkpoint_dir=checkpoint_dir)
     trainer.fit(model, datamodule=dm)
