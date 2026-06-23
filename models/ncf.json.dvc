@@ -1,0 +1,5 @@
+outs:
+- md5: 66ff5c235ad8b8d869c0cc8222862192
+  size: 42
+  hash: md5
+  path: ncf.json

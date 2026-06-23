@@ -1,0 +1,5 @@
+outs:
+- md5: d97f95d0030e840f420e6a99f2651314
+  size: 3085
+  hash: md5
+  path: ncf.onnx
