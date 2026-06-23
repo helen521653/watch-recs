@@ -192,9 +192,44 @@ Top-10 recommendations for user_id=42:
 
 Вывод — ранжированный список `item_idx` (целочисленных индексов товаров) по убыванию скора релевантности.
 
-### Triton Inference Server
+### MLflow Serving
 
-Структура репозитория моделей Triton находится в `triton/`:
+**1. Запустить MLflow сервер** (в отдельном терминале):
+```bash
+uv run mlflow server --host 127.0.0.1 --port 8080
+```
+
+**2. Залогировать ONNX-модель в MLflow:**
+```bash
+uv run python -c "
+import mlflow, onnx as onnx_lib
+mlflow.set_tracking_uri('http://127.0.0.1:8080')
+mlflow.set_experiment('watch-recs')
+model = onnx_lib.load('models/ncf.onnx')
+with mlflow.start_run(run_name='ncf-onnx') as run:
+    mlflow.onnx.log_model(model, 'model')
+    print('run_id:', run.info.run_id)
+"
+```
+
+**3. Поднять serving** (вставить run_id из шага 2):
+```bash
+MLFLOW_TRACKING_URI=http://127.0.0.1:8080 uv run mlflow models serve \
+    --model-uri "runs:/<run_id>/model" \
+    --port 5002 \
+    --no-conda
+```
+
+**4. Тест:**
+```bash
+curl -X POST http://127.0.0.1:5002/invocations \
+    -H "Content-Type: application/json" \
+    -d '{"inputs": {"user_ids": [42, 42], "item_ids": [0, 1]}}'
+```
+
+### Triton Inference Server (опционально, требует Docker)
+
+Конфигурация Triton находится в `triton/`:
 ```
 triton/
 └── ncf/
@@ -203,9 +238,8 @@ triton/
         └── model.onnx  # копируется скриптом setup_triton.sh
 ```
 
-**Подготовка и запуск:**
 ```bash
-# 1. Скопировать экспортированную модель в Triton-репозиторий
+# 1. Скопировать модель в Triton-репозиторий
 bash scripts/setup_triton.sh
 
 # 2. Запустить Triton (Docker)
@@ -214,35 +248,10 @@ docker run --rm -p 8000:8000 -p 8001:8001 -p 8002:8002 \
     nvcr.io/nvidia/tritonserver:24.01-py3 \
     tritonserver --model-repository=/models
 
-# 3. Проверить статус модели
+# 3. Проверить статус
 curl http://localhost:8000/v2/models/ncf/ready
-```
 
-**Тестирование через Python API:**
-```bash
-# установить клиент (один раз)
+# 4. Запрос рекомендаций через Python API
 pip install tritonclient[http]
-
-# запрос рекомендаций
 python scripts/triton_client.py --user_id=42 --top_k=10
-```
-
-### MLflow Serving (альтернатива, макс 5 баллов)
-
-```bash
-# Узнать run_id рана ncf-onnx
-mlflow runs list --experiment-name watch-recs
-
-# Поднять serving
-mlflow models serve \
-    --model-uri "runs:/<run_id>/model" \
-    --port 5002 \
-    --no-conda
-```
-
-**Пример запроса:**
-```bash
-curl -X POST http://127.0.0.1:5002/invocations \
-    -H "Content-Type: application/json" \
-    -d '{"inputs": {"user_ids": [42, 42], "item_ids": [0, 1]}}'
 ```
